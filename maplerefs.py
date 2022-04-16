@@ -1,4 +1,4 @@
-crawling_keys = [
+crawl_keys = [
     "길드",
     "메소",
     "메이플포인트",
