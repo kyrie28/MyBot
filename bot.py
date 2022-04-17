@@ -1,9 +1,9 @@
 import discord
 from discord.ext import commands
 import asyncio
-from maplecrawler import GetCharacterInfo
+from maplecrawler import get_character_info
 import maplerefs
-import youtube_dl
+from ydl import download_from_youtube
 
 f = open("token.txt", "r", encoding="utf-8")
 token = f.read()
@@ -35,7 +35,7 @@ async def maple(ctx, charName=None):
         await ctx.send(f"{ctx.message.author.mention} 사용법: !메이플 <캐릭터 이름>")
         return
 
-    charInfo = GetCharacterInfo(charName)
+    charInfo = get_character_info(charName)
     if not charInfo:
         await ctx.send(
             embed=discord.Embed(description="존재하지 않는 캐릭터입니다.", color=0xFF9D00)
@@ -52,71 +52,73 @@ async def maple(ctx, charName=None):
     await ctx.send(embed=charInfoEmbed)
 
 
-# 1개의 VoiceClient만 사용하는 음악 재생 기능
-@bot.command(aliases=["재생"])
-async def play(ctx, url=None):
-
-    # 유저가 음성 채널에 접속해 있지 않을 경우
+async def connect_helper(ctx):
     if not ctx.author.voice:
         await ctx.send(f"{ctx.message.author.mention} 명령어를 사용하기 위해서는 음성 채널에 접속해야 합니다.")
-        return
-
-    # 봇이 음성 채널에 접속해 있지 않을 경우
-    if bot.voice_clients == []:
-        if not url:
-            await ctx.send(f"{ctx.message.author.mention} 사용법: !재생 <YouTube URL>")
-            return
+        return True
+    elif not ctx.voice_client:
+        await ctx.send(f"{ctx.message.author.mention} 음성 채널에 연결 중...")
         await ctx.author.voice.channel.connect()
-        await ctx.send(
-            f"{ctx.message.author.mention} [{str(bot.voice_clients[0].channel)}] 음성 채널에 연결 중..."
-        )
-
-    voice = bot.voice_clients[0]
-    if not url:
-        # Argument가 없고, pause 상태일 경우 음악 재생을 재개함
-        if voice.is_paused():
-            await ctx.send(f"{ctx.message.author.mention} 음악을 다시 재생합니다.")
-            voice.resume()
-        else:
-            await ctx.send(f"{ctx.message.author.mention} 사용법: !재생 <YouTube URL>")
-            return
-
-    ydl_opts = {"format": "bestaudio"}
-    FFMPEG_OPTIONS = {
-        "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-        "options": "-vn",
-    }
-
-    # 유튜브로부터 음악 다운로드
-    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        URL = info["formats"][0]["url"]
-
-    # 음악 재생
-    await ctx.send(f"{ctx.message.author.mention} 음악 재생 중...")
-    if voice.is_playing() or voice.is_paused():
-        voice.stop()
-    voice.play(discord.FFmpegPCMAudio(URL, **FFMPEG_OPTIONS))
+        return True
+    elif not ctx.voice_client.channel == ctx.author.voice.channel:
+        await ctx.voice_client.disconnect()
+        await ctx.send(f"{ctx.message.author.mention} 음성 채널에 연결 중...")
+        await ctx.author.voice.channel.connect()
+        return True
+    else:
+        return False
 
 
-@bot.command(aliases=["disconnect", "나가기"])
-async def leave(ctx):
-    if bot.voice_clients:
-        await ctx.send(
-            f"{ctx.message.author.mention} [{str(bot.voice_clients[0].channel)}] 음성 채널을 나갑니다."
-        )
-        await bot.voice_clients[0].disconnect()
+@bot.command(aliases=["연결"])
+async def connect(ctx):
+    if not await connect_helper(ctx):
+        await ctx.send(f"{ctx.message.author.mention} 이미 음성 채널에 연결되었습니다.")
+
+
+@bot.command(aliases=["연결해제", "연결끊기", "leave", "나가기"])
+async def disconnect(ctx):
+    if ctx.voice_client:
+        voice = ctx.voice_client
+        await ctx.send(f"{ctx.message.author.mention} 음성 채널을 나갑니다.")
+        await voice.disconnect()
     else:
         await ctx.send(f"{ctx.message.author.mention} 연결된 음성 채널이 없습니다.")
 
 
+@bot.command(aliases=["재생"])
+async def play(ctx, user_input=None):
+    if not user_input:
+        # Argument가 없고, pause 상태일 경우 음악 재생을 재개함
+        if ctx.voice_client and ctx.voice_client.is_paused():
+            await ctx.send(f"{ctx.message.author.mention} 음악을 다시 재생합니다.")
+            ctx.voice_client.resume()
+        else:
+            await ctx.send(f"{ctx.message.author.mention} 사용법: !재생 <YouTube URL>")
+            return
+
+    # 음성 채널에 연결
+    await connect_helper(ctx)
+
+    # 유튜브로부터 음악 다운로드
+    url = download_from_youtube(user_input)
+
+    # 음악 재생
+    FFMPEG_OPTIONS = {
+        "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+        "options": "-vn",
+    }
+    await ctx.send(f"{ctx.message.author.mention} 음악 재생 중...")
+    if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+        ctx.voice_client.stop()
+    ctx.voice_client.play(discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS))
+
+
 @bot.command(aliases=["일시정지"])
 async def pause(ctx):
-    if bot.voice_clients:
-        voice = bot.voice_clients[0]
-        if voice.is_playing():
+    if ctx.voice_client:
+        if ctx.voice_client.is_playing():
             await ctx.send(f"{ctx.message.author.mention} 음악을 일시정지합니다.")
-            await voice.pause()
+            ctx.voice_client.pause()
         else:
             await ctx.send(f"{ctx.message.author.mention} 재생 중인 음악이 없습니다.")
     else:
@@ -125,11 +127,10 @@ async def pause(ctx):
 
 @bot.command(aliases=["정지"])
 async def stop(ctx):
-    if bot.voice_clients:
-        voice = bot.voice_clients[0]
-        if voice.is_playing() or voice.is_paused():
+    if ctx.voice_client:
+        if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
             await ctx.send(f"{ctx.message.author.mention} 음악을 정지합니다.")
-            await voice.stop()
+            ctx.voice_client.stop()
         else:
             await ctx.send(f"{ctx.message.author.mention} 재생 중인 음악이 없습니다.")
     else:

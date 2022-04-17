@@ -4,7 +4,7 @@ from urllib import parse
 import maplerefs
 
 
-def GetCharacterInfo(charName):
+def get_character_info(charName):
     charInfo = {}
 
     encodedCharName = parse.quote(charName)
@@ -86,7 +86,7 @@ def GetCharacterInfo(charName):
 
 def main():
     print("캐릭터 이름을 입력하세요: ")
-    result = GetCharacterInfo(input().strip())
+    result = get_character_info(input().strip())
     if result:
         print(result)
     else:
